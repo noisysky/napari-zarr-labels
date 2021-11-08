@@ -30,11 +30,22 @@ class ZarrLabelsLayer(QWidget):
         save_button = QPushButton('Save As Zarr', self)
         self.labels_layer_object = None
         try:
-            self.image_layer_object = next(filter(lambda x: type(x) == Image, napari_viewer.layers))
+            self.image_layer_objects = list(filter(lambda x: type(x) == Image, napari_viewer.layers))
         except StopIteration:
-            self.image_layer_object = None
-        if self.image_layer_object:
-            self.source_dir = os.path.dirname(self.image_layer_object.source.path)
+            self.image_layer_objects = None
+
+        if self.image_layer_objects:
+            self.source_dir = os.path.dirname(self.image_layer_objects[0].source.path)
+            zarr_folder = os.path.join(self.source_dir, 'threshold')
+            self.labels_layer_store = os.path.join(zarr_folder, 'local.zarr')
+            if not os.path.exists(zarr_folder):
+                os.mkdir(zarr_folder)
+            self.chunks = self.image_layer_objects[0].data[0].chunksize
+            self.dtype = self.image_layer_objects[0].data[0].dtype
+        else:
+            self.source_dir = os.getcwd()
+            self.chunks = (128, 128)
+            self.dtype = int
 
         def trigger_create():
             extent = napari_viewer.layers.extent.world
@@ -45,11 +56,7 @@ class ZarrLabelsLayer(QWidget):
                 np.round(s / sc).astype('int') if s > 0 else 1
                 for s, sc in zip(scene_size, scale)
             ]
-            empty_labels = zarr.zeros(
-                shape,
-                chunks=self.image_layer_object.data[0].chunksize,
-                dtype=self.image_layer_object.data[0].dtype
-            )
+            empty_labels = zarr.zeros(shape, chunks=self.chunks, dtype=self.dtype)
             self.labels_layer_object = napari_viewer.add_labels(empty_labels, translate=np.array(corner), scale=scale)
 
         def trigger_paint():
@@ -59,22 +66,13 @@ class ZarrLabelsLayer(QWidget):
 
         def trigger_threshold():
             import dask.array as da
-            image_layer_object = self.image_layer_object
+            image_layer_object = self.image_layer_objects[0]
             array_mean = float(da.mean(image_layer_object.data[0]))
             array_stddev = float(da.std(image_layer_object.data[0]))
             mask_array = image_layer_object.data[0] > (array_mean + 3 * array_stddev)
-            new_folder = os.path.join(self.source_dir, 'threshold')
-            self.labels_layer_store = os.path.join(new_folder, 'local.zarr')
-            if not os.path.exists(new_folder):
-                os.mkdir(new_folder)
             da.to_zarr(mask_array, self.labels_layer_store, overwrite=True)
-            z1 = zarr.open_array(
-                self.labels_layer_store,
-                mode='a',
-                chunks=self.image_layer_object.data[0].chunksize,
-                dtype=self.image_layer_object.data[0].dtype
-            )
-            z2 = zarr.array(z1, chunks=self.image_layer_object.data[0].chunksize, dtype=self.image_layer_object.data[0].dtype)
+            z1 = zarr.open_array(self.labels_layer_store, mode='a', chunks=self.chunks, dtype=self.dtype)
+            z2 = zarr.array(z1, chunks=self.chunks, dtype=self.dtype)
             self.labels_layer_object.data = z2
 
         def trigger_save():
