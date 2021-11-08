@@ -6,6 +6,8 @@ see: https://napari.org/docs/dev/plugins/hook_specifications.html
 
 Replace code below according to your needs.
 """
+import os
+
 from napari_plugin_engine import napari_hook_implementation
 import numpy as np
 from qtpy.QtWidgets import QWidget, QGridLayout, QPushButton
@@ -24,11 +26,15 @@ class ZarrLabelsLayer(QWidget):
         layout = QGridLayout()
         create_btn = QPushButton('Create', self)
         paint_button = QPushButton('Paint', self)
+        threshold_button = QPushButton('Threshold', self)
+        save_button = QPushButton('Save As Zarr', self)
         self.labels_layer_object = None
         try:
             self.image_layer_object = next(filter(lambda x: type(x) == Image, napari_viewer.layers))
         except StopIteration:
             self.image_layer_object = None
+        if self.image_layer_object:
+            self.source_dir = os.path.dirname(self.image_layer_object.source.path)
 
         def trigger_create():
             extent = napari_viewer.layers.extent.world
@@ -51,10 +57,37 @@ class ZarrLabelsLayer(QWidget):
             if self.labels_layer_object:
                 activate_paint_mode(self.labels_layer_object)
 
+        def trigger_threshold():
+            import dask.array as da
+            image_layer_object = self.image_layer_object
+            array_mean = float(da.mean(image_layer_object.data[0]))
+            array_stddev = float(da.std(image_layer_object.data[0]))
+            mask_array = image_layer_object.data[0] > (array_mean + 3 * array_stddev)
+            new_folder = os.path.join(self.source_dir, 'threshold')
+            self.labels_layer_store = os.path.join(new_folder, 'local.zarr')
+            if not os.path.exists(new_folder):
+                os.mkdir(new_folder)
+            da.to_zarr(mask_array, self.labels_layer_store, overwrite=True)
+            z1 = zarr.open_array(
+                self.labels_layer_store,
+                mode='a',
+                chunks=self.image_layer_object.data[0].chunksize,
+                dtype=self.image_layer_object.data[0].dtype
+            )
+            z2 = zarr.array(z1, chunks=self.image_layer_object.data[0].chunksize, dtype=self.image_layer_object.data[0].dtype)
+            self.labels_layer_object.data = z2
+
+        def trigger_save():
+            zarr.save(self.labels_layer_store, self.labels_layer_object.data)
+
         create_btn.clicked.connect(trigger_create)
         paint_button.clicked.connect(trigger_paint)
+        threshold_button.clicked.connect(trigger_threshold)
+        save_button.clicked.connect(trigger_save)
         layout.addWidget(create_btn)
         layout.addWidget(paint_button)
+        layout.addWidget(threshold_button)
+        layout.addWidget(save_button)
 
         # activate layout
         self.setLayout(layout)
