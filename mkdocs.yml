@@ -1,0 +1,9 @@
+site_name: napari-zarr-labels
+site_description: A dock widget to work with Labels layer as a zarr array
+site_author: Iana Vasylieva
+
+theme: readthedocs
+
+
+pages:
+- Home: index.md
