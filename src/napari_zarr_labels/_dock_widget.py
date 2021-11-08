@@ -70,10 +70,11 @@ class ZarrLabelsLayer(QWidget):
             array_mean = float(da.mean(image_layer_object.data[0]))
             array_stddev = float(da.std(image_layer_object.data[0]))
             mask_array = image_layer_object.data[0] > (array_mean + 3 * array_stddev)
-            da.to_zarr(mask_array, self.labels_layer_store, overwrite=True)
-            z1 = zarr.open_array(self.labels_layer_store, mode='a', chunks=self.chunks, dtype=self.dtype)
-            z2 = zarr.array(z1, chunks=self.chunks, dtype=self.dtype)
-            self.labels_layer_object.data = z2
+            mask_where_array = da.where(mask_array)
+            coords = (x.compute() for x in mask_where_array)
+            z1 = zarr.array(zarr.open_array(self.labels_layer_store, mode='a'), chunks=self.chunks, dtype=self.dtype)
+            z1.vindex[tuple(coords)] = 1
+            self.labels_layer_object.data = z1
 
         def trigger_save():
             zarr.save(self.labels_layer_store, self.labels_layer_object.data)
