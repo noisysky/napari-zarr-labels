@@ -64,24 +64,48 @@ class ZarrLabelsLayer(QWidget):
             if self.labels_layer_object:
                 activate_paint_mode(self.labels_layer_object)
 
-        def trigger_threshold():
+        def trigger_threshold_merge_with_paint():
+            """
+            Attempt to keep previous work results (e.g. painting) and merge them with thresholding results.
+            """
             import dask.array as da
-            image_layer_object = self.image_layer_objects[0]
-            array_mean = float(da.mean(image_layer_object.data[0]))
-            array_stddev = float(da.std(image_layer_object.data[0]))
-            mask_array = image_layer_object.data[0] > (array_mean + 3 * array_stddev)
-            mask_where_array = da.where(mask_array)
-            coords = (x.compute() for x in mask_where_array)
+            image_layer_object = next(filter(lambda x: x.visible, self.image_layer_objects))  # Should leave only one visible channel
+            contrast_lower_limit, contrast_upper_limit = image_layer_object.contrast_limits
+            selected = da.where(
+                (image_layer_object.data[0] > contrast_lower_limit)
+                & (image_layer_object.data[0] <= contrast_upper_limit)
+            )
+            coords = (x.compute() for x in selected)
+
+            # Costly reading of array stored on disk
             z1 = zarr.array(zarr.open_array(self.labels_layer_store, mode='a'), chunks=self.chunks, dtype=self.dtype)
+
+            # Costly coordinates assignment
             z1.vindex[tuple(coords)] = 1
             self.labels_layer_object.data = z1
+
+        def trigger_threshold_ignore_paint():
+            """
+            No conversion to zarr. Working with Labels layer as a dask array.
+            """
+            image_layer_object = next(filter(lambda x: x.visible, self.image_layer_objects))  # Should leave only one visible channel
+            contrast_lower_limit, contrast_upper_limit = image_layer_object.contrast_limits
+            selected = (
+                    (image_layer_object.data[0] > contrast_lower_limit)
+                    & (image_layer_object.data[0] <= contrast_upper_limit)
+            )
+            self.labels_layer_object.data = selected.compute()
 
         def trigger_save():
             zarr.save(self.labels_layer_store, self.labels_layer_object.data)
 
         create_btn.clicked.connect(trigger_create)
         paint_button.clicked.connect(trigger_paint)
-        threshold_button.clicked.connect(trigger_threshold)
+
+        # one of the two functions should be chosen
+        threshold_button.clicked.connect(trigger_threshold_ignore_paint)
+        # threshold_button.clicked.connect(trigger_threshold_merge_with_paint)
+
         save_button.clicked.connect(trigger_save)
         layout.addWidget(create_btn)
         layout.addWidget(paint_button)
